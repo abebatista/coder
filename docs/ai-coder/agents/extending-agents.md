@@ -216,7 +216,11 @@ whether `command` or `url` is present, or you can set it explicitly with
 agent spawns the process in the workspace.
 
 **HTTP transport**: set `url`, and optionally `headers`. The agent connects
-to the HTTP endpoint from the workspace.
+to the HTTP endpoint from the workspace. `type` can be `http`,
+`streamable-http`, or `sse`. Headers are sent only to the scheme, host, and
+port of `url`, and never replace headers the MCP client sets. Redirects to
+another origin, including `http` to `https`, are refused, so set `url` to the
+final address.
 
 ### How discovery works
 
