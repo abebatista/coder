@@ -32,5 +32,5 @@ func (s *ServerTailnet) AgentTicketCount(agentID uuid.UUID) int {
 }
 
 func (s *ServerTailnet) AgentAPITransport(agentID uuid.UUID) http.RoundTripper {
-	return s.apiTransport(agentID)
+	return s.transportsFor(agentID).api
 }
