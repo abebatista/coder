@@ -25218,6 +25218,7 @@ const docTemplate = `{
                 "enable-ai-workspace-debug",
                 "chat-board",
                 "chat-stage-metrics",
+                "chat-acp-subagents",
                 "chat-automations"
             ],
             "x-enum-comments": {
@@ -25225,6 +25226,7 @@ const docTemplate = `{
                 "ExperimentAIGatewaySeatExclusion": "Excludes AI Gateway (AI Bridge) usage from AI Governance seat consumption.",
                 "ExperimentAgentLifecycleHooks": "Enables chat lifecycle hook webhooks for agent chats.",
                 "ExperimentAutoFillParameters": "This should not be taken out of experiments until we have redesigned the feature.",
+                "ExperimentChatACPSubagents": "Enables workspace-local ACP subagent tools in root chats.",
                 "ExperimentChatAdvisor": "Enables the advisor tool for root agent chats.",
                 "ExperimentChatAutomations": "Enables webhook and scheduled automations that deliver prompts to agent chats.",
                 "ExperimentChatBoard": "Offers the Coder Agents chat board as a per-browser opt-in.",
@@ -25262,6 +25264,7 @@ const docTemplate = `{
                 "Enables debugging failed workspace builds with Coder Agents.",
                 "Offers the Coder Agents chat board as a per-browser opt-in.",
                 "Exposes chat lifecycle stage durations as Prometheus metrics.",
+                "Enables workspace-local ACP subagent tools in root chats.",
                 "Enables webhook and scheduled automations that deliver prompts to agent chats."
             ],
             "x-enum-varnames": [
@@ -25284,6 +25287,7 @@ const docTemplate = `{
                 "ExperimentEnableAIWorkspaceDebug",
                 "ExperimentChatBoard",
                 "ExperimentChatStageMetrics",
+                "ExperimentChatACPSubagents",
                 "ExperimentChatAutomations"
             ]
         },

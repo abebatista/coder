@@ -5531,6 +5531,7 @@ const (
 	ExperimentEnableAIWorkspaceDebug    Experiment = "enable-ai-workspace-debug"   // Enables debugging failed workspace builds with Coder Agents.
 	ExperimentChatBoard                 Experiment = "chat-board"                  // Offers the Coder Agents chat board as a per-browser opt-in.
 	ExperimentChatStageMetrics          Experiment = "chat-stage-metrics"          // Exposes chat lifecycle stage durations as Prometheus metrics.
+	ExperimentChatACPSubagents          Experiment = "chat-acp-subagents"          // Enables workspace-local ACP subagent tools in root chats.
 	ExperimentChatAutomations           Experiment = "chat-automations"            // Enables webhook and scheduled automations that deliver prompts to agent chats.
 )
 
@@ -5572,6 +5573,8 @@ func (e Experiment) DisplayName() string {
 		return "AI Workspace Debugging"
 	case ExperimentChatBoard:
 		return "Chat Board"
+	case ExperimentChatACPSubagents:
+		return "Chat ACP Subagents"
 	case ExperimentChatAutomations:
 		return "Chat Automations"
 	default:
@@ -5604,6 +5607,7 @@ var ExperimentsKnown = Experiments{
 	ExperimentChatBoard,
 	ExperimentChatStageMetrics,
 	ExperimentChatAutomations,
+	ExperimentChatACPSubagents,
 }
 
 // ExperimentsSafe should include all experiments that are safe for

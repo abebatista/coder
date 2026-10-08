@@ -3919,6 +3919,8 @@ func (p *Server) appendRootChatTools(
 		}))
 	}
 
+	tools = append(tools, p.acpTools(ctx, opts)...)
+
 	return append(tools, p.subagentTools(ctx, func() database.Chat {
 		return opts.chat
 	}, opts.modelConfigID)...)
