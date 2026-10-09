@@ -37,9 +37,8 @@ const (
 	// gathering agent statistics.
 	AgentHTTPAPIServerPort = 4
 	// AgentHTTPAPIServerIdleTimeout is how long the agent's HTTP API server
-	// keeps an idle connection. NewAgentAPITransport requires clients to close
-	// idle connections sooner, so the agent never closes one a client is about
-	// to reuse.
+	// keeps an idle connection open. Older agents close idle connections
+	// after 20 seconds.
 	AgentHTTPAPIServerIdleTimeout = 15 * time.Minute
 
 	// AgentMinimumListeningPort is the minimum port that the listening-ports

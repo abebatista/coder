@@ -47,12 +47,12 @@ func NewAgentConn(conn *tailnet.Conn, opts AgentConnOptions) AgentConn {
 		// No keep-alive: DialAgent callers make few API requests per
 		// connection, so idle connections would hold agent memory without
 		// saving round trips.
-		c.apiTransport = newAPITransport(opts.AgentID, func(ctx context.Context, port uint16) (net.Conn, error) {
+		c.apiTransport = newUnpooledAPITransport(opts.AgentID, func(ctx context.Context, port uint16) (net.Conn, error) {
 			if !c.AwaitReachable(ctx) {
 				return nil, xerrors.Errorf("workspace agent not reachable in time: %v", ctx.Err())
 			}
 			return c.DialContextTCP(ctx, netip.AddrPortFrom(c.agentAddress(), port))
-		}, opts.Logger, AgentAPIPool{})
+		}, opts.Logger)
 	}
 	return c
 }
@@ -1146,9 +1146,11 @@ func (c *agentConn) LS(ctx context.Context, path string, req LSRequest) (LSRespo
 	ctx, span := tracing.StartSpan(ctx)
 	defer span.End()
 
-	res, err := c.apiRequest(ctx, http.MethodPost, agentAPIPath("/api/v0/list-directory", neturl.Values{
+	// Listing is read-only. An Idempotency-Key with no value marks the request
+	// as resendable (see resendable) without sending the header.
+	res, err := c.apiRequestWithHeader(ctx, http.MethodPost, agentAPIPath("/api/v0/list-directory", neturl.Values{
 		"path": []string{path},
-	}), req)
+	}), req, http.Header{idempotencyKeyHeader: nil})
 	if err != nil {
 		return LSResponse{}, xerrors.Errorf("do request: %w", err)
 	}

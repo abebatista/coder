@@ -2,6 +2,7 @@ package workspacesdk
 
 import (
 	"context"
+	"crypto/tls"
 	"net"
 	"net/http"
 	"net/netip"
@@ -28,27 +29,48 @@ type AgentTransport struct {
 	transport *http.Transport
 }
 
+// AgentTransportOptions configures an AgentTransport.
+type AgentTransportOptions struct {
+	// AllowPort reports whether a port may be dialed. It must give the same
+	// answer for a port every time: pooled connections are reused without
+	// asking again.
+	AllowPort           func(port uint16) bool
+	MaxIdleConnsPerPort int           // Per port and scheme. Zero keeps no idle connections.
+	IdleConnTimeout     time.Duration // Required if MaxIdleConnsPerPort is positive.
+	TLSClientConfig     *tls.Config
+	HTTP2               bool // Negotiate HTTP/2 over TLS.
+}
+
 // NewAgentTransport returns a transport for agentID. dial must connect to
-// that agent. allowPort decides which ports may be dialed, and must always
-// give the same answer for a port: pooled connections are reused without
-// asking again. base supplies pool, TLS and HTTP/2 settings, and may be nil
-// to keep no idle connections.
-func NewAgentTransport(agentID uuid.UUID, dial AgentDialer, logger slog.Logger, allowPort func(port uint16) bool, base *http.Transport) *AgentTransport {
-	t := &http.Transport{DisableKeepAlives: true}
-	if base != nil {
-		t = base.Clone()
+// that agent.
+func NewAgentTransport(agentID uuid.UUID, dial AgentDialer, logger slog.Logger, opts AgentTransportOptions) (*AgentTransport, error) {
+	if opts.AllowPort == nil {
+		return nil, xerrors.New("port rule is required")
 	}
-	// Only dial may open connections: it reaches this agent over the tailnet.
-	t.Proxy = nil
-	t.Dial = nil //nolint:staticcheck // Cleared so it cannot be used.
-	t.DialTLS = nil
-	t.DialTLSContext = nil
-	t.DialContext = dialAgentPort(dial, allowPort)
+	if opts.MaxIdleConnsPerPort < 0 {
+		return nil, xerrors.Errorf("max idle connections %d must not be negative", opts.MaxIdleConnsPerPort)
+	}
+	if opts.MaxIdleConnsPerPort > 0 && opts.IdleConnTimeout <= 0 {
+		return nil, xerrors.Errorf("idle connection timeout %s must be positive to keep idle connections", opts.IdleConnTimeout)
+	}
+	return buildAgentTransport(agentID, dial, logger, opts), nil
+}
+
+func buildAgentTransport(agentID uuid.UUID, dial AgentDialer, logger slog.Logger, opts AgentTransportOptions) *AgentTransport {
 	return &AgentTransport{
-		agentID:   agentID,
-		addr:      tailnet.TailscaleServicePrefix.AddrFromUUID(agentID),
-		logger:    logger,
-		transport: t,
+		agentID: agentID,
+		addr:    tailnet.TailscaleServicePrefix.AddrFromUUID(agentID),
+		logger:  logger,
+		transport: &http.Transport{
+			DialContext:           dialAgentPort(dial, opts.AllowPort),
+			DisableKeepAlives:     opts.MaxIdleConnsPerPort == 0,
+			MaxIdleConnsPerHost:   opts.MaxIdleConnsPerPort,
+			IdleConnTimeout:       opts.IdleConnTimeout,
+			TLSClientConfig:       opts.TLSClientConfig,
+			ForceAttemptHTTP2:     opts.HTTP2,
+			TLSHandshakeTimeout:   10 * time.Second, // As http.DefaultTransport.
+			ExpectContinueTimeout: time.Second,      // As http.DefaultTransport.
+		},
 	}
 }
 
@@ -85,48 +107,78 @@ func (t *AgentTransport) CloseIdleConnections() {
 // value keeps none.
 type AgentAPIPool struct {
 	MaxIdleConns    int           // Per agent.
-	IdleConnTimeout time.Duration // Must be positive and below AgentHTTPAPIServerIdleTimeout if MaxIdleConns > 0.
+	IdleConnTimeout time.Duration // Required if MaxIdleConns is positive.
 }
 
-// AgentAPITransport sends requests to one agent's HTTP API server.
-type AgentAPITransport struct{ t *AgentTransport }
+// AgentAPITransport sends requests to one agent's HTTP API server. It reuses
+// idle connections only for requests that http.Transport resends on a new
+// connection when a reused one fails (see resendable). Other requests use a
+// new connection each, so the agent closing an idle connection cannot fail
+// them.
+type AgentAPITransport struct {
+	pooled   *AgentTransport
+	unpooled *AgentTransport // Same as pooled if pooled keeps no idle connections.
+}
 
 // NewAgentAPITransport returns a transport for the HTTP API server of
 // agentID. dial must connect to that agent.
 func NewAgentAPITransport(agentID uuid.UUID, dial AgentDialer, logger slog.Logger, pool AgentAPIPool) (*AgentAPITransport, error) {
-	if pool.MaxIdleConns < 0 {
-		return nil, xerrors.Errorf("max idle connections %d must not be negative", pool.MaxIdleConns)
+	pooled, err := NewAgentTransport(agentID, dial, logger, AgentTransportOptions{
+		AllowPort:           isAgentAPIPort,
+		MaxIdleConnsPerPort: pool.MaxIdleConns,
+		IdleConnTimeout:     pool.IdleConnTimeout,
+	})
+	if err != nil {
+		return nil, err
 	}
-	if pool.MaxIdleConns > 0 && (pool.IdleConnTimeout <= 0 || pool.IdleConnTimeout >= AgentHTTPAPIServerIdleTimeout) {
-		return nil, xerrors.Errorf("idle connection timeout %s must be positive and below the agent's %s", pool.IdleConnTimeout, AgentHTTPAPIServerIdleTimeout)
+	unpooled := pooled
+	if pool.MaxIdleConns > 0 {
+		unpooled = buildAgentTransport(agentID, dial, logger, AgentTransportOptions{AllowPort: isAgentAPIPort})
 	}
-	return newAPITransport(agentID, dial, logger, pool), nil
+	return &AgentAPITransport{pooled: pooled, unpooled: unpooled}, nil
 }
 
-func newAPITransport(agentID uuid.UUID, dial AgentDialer, logger slog.Logger, pool AgentAPIPool) *AgentAPITransport {
-	var base *http.Transport
-	if pool.MaxIdleConns > 0 {
-		base = &http.Transport{
-			MaxIdleConnsPerHost: pool.MaxIdleConns,
-			IdleConnTimeout:     pool.IdleConnTimeout,
-		}
-	}
-	return &AgentAPITransport{NewAgentTransport(agentID, dial, logger, func(port uint16) bool {
-		return port == AgentHTTPAPIServerPort
-	}, base)}
+func newUnpooledAPITransport(agentID uuid.UUID, dial AgentDialer, logger slog.Logger) *AgentAPITransport {
+	t := buildAgentTransport(agentID, dial, logger, AgentTransportOptions{AllowPort: isAgentAPIPort})
+	return &AgentAPITransport{pooled: t, unpooled: t}
+}
+
+func isAgentAPIPort(port uint16) bool {
+	return port == AgentHTTPAPIServerPort
 }
 
 // Addr returns the agent's address. Request URLs must use it as their host.
 func (t *AgentAPITransport) Addr() netip.Addr {
-	return t.t.Addr()
+	return t.pooled.Addr()
 }
 
 func (t *AgentAPITransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	return t.t.RoundTrip(req)
+	if resendable(req) {
+		return t.pooled.RoundTrip(req)
+	}
+	return t.unpooled.RoundTrip(req)
 }
 
 func (t *AgentAPITransport) CloseIdleConnections() {
-	t.t.CloseIdleConnections()
+	t.pooled.CloseIdleConnections()
+}
+
+// resendable reports whether http.Transport resends req on a new connection
+// when a reused connection fails before the response arrives: the method is
+// idempotent or an Idempotency-Key or X-Idempotency-Key header is present,
+// even with no value, and the body is empty or has GetBody. This is the rule
+// of the unexported (*http.Request).isReplayable.
+func resendable(req *http.Request) bool {
+	if req.Body != nil && req.Body != http.NoBody && req.GetBody == nil {
+		return false
+	}
+	switch req.Method {
+	case "", http.MethodGet, http.MethodHead, http.MethodOptions, http.MethodTrace:
+		return true
+	}
+	_, key := req.Header["Idempotency-Key"]
+	_, xKey := req.Header["X-Idempotency-Key"]
+	return key || xKey
 }
 
 // dialAgentPort dials the port of addr if allowed. http.Transport has already

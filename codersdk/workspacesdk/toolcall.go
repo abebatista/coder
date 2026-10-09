@@ -14,10 +14,10 @@ import (
 // process ID of a process it starts.
 const CoderToolCallIDHeader = "Coder-Tool-Call-Id"
 
-// idempotencyKeyHeader marks a POST as safe to resend. http.Transport resends
-// such a request on a new connection when a reused connection fails before
-// the response arrives. Tool-call requests carry it because the agent
-// deduplicates them by tool call ID.
+// idempotencyKeyHeader marks a POST as safe to resend: http.Transport resends
+// it on a new connection when a reused connection fails before the response
+// arrives, and AgentAPITransport sends it on pooled connections. Tool-call
+// requests carry it because the agent deduplicates them by tool call ID.
 const idempotencyKeyHeader = "Idempotency-Key"
 
 type toolCallIDContextKey struct{}

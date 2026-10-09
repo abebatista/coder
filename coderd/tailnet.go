@@ -144,7 +144,11 @@ func (s *ServerTailnet) AppTransport(agentID uuid.UUID) (_ *workspaceapps.AgentA
 	var t *workspaceapps.AgentAppTransport
 	release, err := s.coordCtrl.acquire(agentID, func(a *agentState) error {
 		if a.apps == nil {
-			a.apps = workspaceapps.NewAgentAppTransport(agentID, s.agentDialer(agentID), s.logger)
+			apps, err := workspaceapps.NewAgentAppTransport(agentID, s.agentDialer(agentID), s.logger)
+			if err != nil {
+				return err
+			}
+			a.apps = apps
 		}
 		t = a.apps
 		return nil

@@ -20,6 +20,7 @@ import (
 	"github.com/go-jose/go-jose/v4/jwt"
 	"github.com/google/uuid"
 	"go.opentelemetry.io/otel/trace"
+	"golang.org/x/xerrors"
 
 	"cdr.dev/slog/v3"
 	"github.com/coder/coder/v2/agent/agentssh"
@@ -90,33 +91,33 @@ type AgentAppTransport struct{ t *workspacesdk.AgentTransport }
 
 // NewAgentAppTransport returns a transport for the apps of agentID. dial must
 // connect to that agent.
-func NewAgentAppTransport(agentID uuid.UUID, dial workspacesdk.AgentDialer, logger slog.Logger) *AgentAppTransport {
-	base, ok := http.DefaultTransport.(*http.Transport)
-	if !ok {
-		panic("dev error: default transport is the wrong type")
+func NewAgentAppTransport(agentID uuid.UUID, dial workspacesdk.AgentDialer, logger slog.Logger) (*AgentAppTransport, error) {
+	t, err := workspacesdk.NewAgentTransport(agentID, dial, logger, workspacesdk.AgentTransportOptions{
+		AllowPort: func(port uint16) bool {
+			return port >= workspacesdk.AgentMinimumListeningPort
+		},
+		// These options are mostly just picked at random, and they can likely
+		// be fine-tuned further. Generally, users are running applications in
+		// dev mode which can generate hundreds of requests per page load, so we
+		// keep 6 idle connections per port instead of http.DefaultTransport's 2.
+		MaxIdleConnsPerPort: 6,
+		IdleConnTimeout:     10 * time.Minute,
+		// We intentionally don't verify the certificate chain here.
+		// The connection to the workspace is already established and most
+		// apps are already going to be accessed over plain HTTP, this config
+		// simply allows apps being run over HTTPS to be accessed without error --
+		// many of which may be using self-signed certs.
+		TLSClientConfig: &tls.Config{
+			MinVersion: tls.VersionTLS12,
+			//nolint:gosec
+			InsecureSkipVerify: true,
+		},
+		HTTP2: true, // As http.DefaultTransport.
+	})
+	if err != nil {
+		return nil, xerrors.Errorf("agent app transport: %w", err)
 	}
-	t := base.Clone()
-	// These options are mostly just picked at random, and they can likely be
-	// fine-tuned further. Generally, users are running applications in dev mode
-	// which can generate hundreds of requests per page load, so we increased
-	// MaxIdleConnsPerHost from 2 to 6 and removed the limit of total idle
-	// conns.
-	t.MaxIdleConnsPerHost = 6
-	t.MaxIdleConns = 0
-	t.IdleConnTimeout = 10 * time.Minute
-	// We intentionally don't verify the certificate chain here.
-	// The connection to the workspace is already established and most
-	// apps are already going to be accessed over plain HTTP, this config
-	// simply allows apps being run over HTTPS to be accessed without error --
-	// many of which may be using self-signed certs.
-	t.TLSClientConfig = &tls.Config{
-		MinVersion: tls.VersionTLS12,
-		//nolint:gosec
-		InsecureSkipVerify: true,
-	}
-	return &AgentAppTransport{workspacesdk.NewAgentTransport(agentID, dial, logger, func(port uint16) bool {
-		return port >= workspacesdk.AgentMinimumListeningPort
-	}, t)}
+	return &AgentAppTransport{t}, nil
 }
 
 // Addr returns the agent's address. Request URLs must use it as their host.

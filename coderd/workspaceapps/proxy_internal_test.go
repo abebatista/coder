@@ -29,11 +29,12 @@ func TestAgentAppTransport_Ports(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 	var dialed atomic.Int32
-	tr := NewAgentAppTransport(uuid.New(), func(ctx context.Context, port uint16) (net.Conn, error) {
+	tr, err := NewAgentAppTransport(uuid.New(), func(ctx context.Context, port uint16) (net.Conn, error) {
 		dialed.Store(int32(port))
 		var d net.Dialer
 		return d.DialContext(ctx, "tcp", srv.Listener.Addr().String())
 	}, testutil.Logger(t))
+	require.NoError(t, err)
 	t.Cleanup(tr.CloseIdleConnections)
 
 	get := func(port int) error {
@@ -57,9 +58,10 @@ func TestServer_reverseProxyTargetsAgentAddress(t *testing.T) {
 	t.Parallel()
 
 	agentID := uuid.New()
-	transport := NewAgentAppTransport(agentID, func(context.Context, uint16) (net.Conn, error) {
+	transport, err := NewAgentAppTransport(agentID, func(context.Context, uint16) (net.Conn, error) {
 		return nil, xerrors.New("unused")
 	}, testutil.Logger(t))
+	require.NoError(t, err)
 	s := &Server{ServerOptions: ServerOptions{
 		DashboardURL: &url.URL{Scheme: "https", Host: "coder.example.com"},
 	}}
