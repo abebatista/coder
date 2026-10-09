@@ -105,6 +105,17 @@ func TestMultiAgentController_UseErrorHoldsNoTicket(t *testing.T) {
 	require.Empty(t, m.agents[agentID].tickets)
 }
 
+func TestMultiAgentController_AcquireFailsAfterClose(t *testing.T) {
+	t.Parallel()
+
+	m := NewMultiAgentController(testutil.Context(t, testutil.WaitShort), testutil.Logger(t), noop.NewTracerProvider().Tracer(""), nil)
+	m.Close()
+
+	_, err := m.acquire(uuid.New(), nil)
+	require.ErrorContains(t, err, "agent controller is closed")
+	require.Empty(t, m.agents)
+}
+
 func TestPollingDERPClient_FirstRecvDoesNotWaitForTick(t *testing.T) {
 	t.Parallel()
 

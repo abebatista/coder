@@ -204,7 +204,7 @@ func (s *ServerTailnet) AgentConn(ctx context.Context, agentID uuid.UUID) (works
 
 // agentDialer returns a dialer for agentID. Each connection holds a ticket
 // until it closes, so the agent does not expire while a connection is open
-// or pooled.
+// or pooled. A dial ends when Close is called.
 func (s *ServerTailnet) agentDialer(agentID uuid.UUID) workspacesdk.AgentDialer {
 	addr := tailnet.TailscaleServicePrefix.AddrFromUUID(agentID)
 	return func(ctx context.Context, port uint16) (net.Conn, error) {
@@ -212,6 +212,10 @@ func (s *ServerTailnet) agentDialer(agentID uuid.UUID) workspacesdk.AgentDialer 
 		if err != nil {
 			return nil, xerrors.Errorf("ensure agent: %w", err)
 		}
+		ctx, cancel := context.WithCancel(ctx)
+		defer cancel()
+		stop := context.AfterFunc(s.ctx, cancel)
+		defer stop()
 		if !s.conn.AwaitReachable(ctx, addr) {
 			release()
 			return nil, xerrors.Errorf("workspace agent not reachable in time: %v", ctx.Err())
@@ -314,6 +318,7 @@ type MultiAgentController struct {
 	agents       map[uuid.UUID]*agentState
 	coordination *tailnet.BasicCoordination
 
+	ctx                 context.Context // Done once Close starts or the parent context ends.
 	cancel              context.CancelFunc
 	expireOldAgentsDone chan struct{}
 }
@@ -353,10 +358,14 @@ func (m *MultiAgentController) New(client tailnet.CoordinatorClient) tailnet.Clo
 
 // acquire subscribes to agentID if needed and holds a ticket on its state
 // until release is called. use, if not nil, runs with m.mu held and may
-// build the state's transports; if it fails, no ticket is held.
+// build the state's transports; if it fails, no ticket is held. acquire
+// fails once m.ctx is done.
 func (m *MultiAgentController) acquire(agentID uuid.UUID, use func(*agentState) error) (release func(), _ error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.ctx.Err() != nil {
+		return nil, xerrors.New("agent controller is closed")
+	}
 	a, ok := m.agents[agentID]
 	if !ok {
 		m.logger.Debug(context.Background(),
@@ -492,8 +501,8 @@ func NewMultiAgentController(ctx context.Context, logger slog.Logger, tracer tra
 		agents:              make(map[uuid.UUID]*agentState),
 		expireOldAgentsDone: make(chan struct{}),
 	}
-	ctx, m.cancel = context.WithCancel(ctx)
-	go m.expireOldAgents(ctx)
+	m.ctx, m.cancel = context.WithCancel(ctx)
+	go m.expireOldAgents(m.ctx)
 	return m
 }
 

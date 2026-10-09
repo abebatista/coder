@@ -105,6 +105,39 @@ func TestServerTailnet_AgentConn_CanceledDialReleasesTicket(t *testing.T) {
 	}, testutil.WaitShort, testutil.IntervalFast)
 }
 
+// TestServerTailnet_CloseEndsDials checks that Close ends a dial to an
+// unreachable agent before the request deadline, and that the server tailnet
+// hands out no transports after Close.
+func TestServerTailnet_CloseEndsDials(t *testing.T) {
+	t.Parallel()
+
+	ctx := testutil.Context(t, testutil.WaitLong)
+	agents, serverTailnet := setupServerTailnetAgent(t, 1)
+	agentID := agents[0].id
+
+	conn, release, err := serverTailnet.AgentConn(ctx, agentID)
+	require.NoError(t, err)
+	defer release()
+	require.NoError(t, agents[0].Close())
+
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := conn.ListeningPorts(ctx)
+		errCh <- err
+	}()
+	// The dial holds a ticket while it waits for the agent.
+	require.Eventually(t, func() bool {
+		return serverTailnet.AgentTicketCount(agentID) == 2
+	}, testutil.WaitShort, testutil.IntervalFast)
+	require.NoError(t, serverTailnet.Close())
+	require.Error(t, testutil.TryReceive(testutil.Context(t, testutil.WaitShort), t, errCh))
+
+	_, _, err = serverTailnet.AgentConn(ctx, agentID)
+	require.ErrorContains(t, err, "agent controller is closed")
+	_, _, err = serverTailnet.AppTransport(agentID)
+	require.ErrorContains(t, err, "agent controller is closed")
+}
+
 func TestServerTailnet_AgentAPITransport_RejectsOtherAgent(t *testing.T) {
 	t.Parallel()
 
