@@ -131,8 +131,8 @@ type ServerTailnet struct {
 }
 
 // agentAPIPool keeps one idle API connection per agent. An idle connection
-// holds about 65 KB in coderd and 95 KB in the agent. One serves sequential
-// tool calls; concurrent requests beyond it dial.
+// holds 35 to 50 KB in coderd and 22 to 26 KB in the agent. One serves
+// sequential tool calls; concurrent requests beyond it dial.
 var agentAPIPool = workspacesdk.AgentAPIPool{
 	MaxIdleConns:    1,
 	IdleConnTimeout: 10 * time.Minute,
